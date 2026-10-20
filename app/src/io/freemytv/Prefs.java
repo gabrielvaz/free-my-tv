@@ -3,6 +3,12 @@ package io.freemytv;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
@@ -25,6 +31,10 @@ final class Prefs {
         {"São Paulo", "-23.5505", "-46.6333"}, {"Teresina", "-5.0892", "-42.8019"}, {"Vitória", "-20.3155", "-40.3128"},
         {"Lisboa", "38.7223", "-9.1393"}, {"New York", "40.7128", "-74.0060"},
     };
+
+    /** Remote keys we handle, with the app each opens until the user picks another. Codes read from the TCL's log. */
+    static final int KEY_NETFLIX = 4062, KEY_YOUTUBE = 190, KEY_PRIME = 4099, KEY_TCL_CHANNEL = 4020;
+    static final int[] KEYS = {KEY_NETFLIX, KEY_YOUTUBE, KEY_PRIME, KEY_TCL_CHANNEL};
 
     /** Bumped by every change: screens compare it to know when to redraw. */
     static volatile int version;
@@ -104,4 +114,44 @@ final class Prefs {
 
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
     static void setCoin(int i, boolean on) { put("coin" + i, on); }
+
+    // MARK: - Remote buttons
+
+    private static String defaultApp(int keyCode) {
+        switch (keyCode) {
+            case KEY_NETFLIX: return "com.netflix.ninja";
+            case KEY_YOUTUBE: return "com.google.android.youtube.tv";
+            case KEY_PRIME: return "com.amazon.amazonvideo.livingroom";
+            case KEY_TCL_CHANNEL: return "com.apple.atve.androidtv.appletv";
+            default: return "";
+        }
+    }
+
+    // The key service runs in its own small process (:keys), so that a busy home screen can never delay the TV's keys.
+    // SharedPreferences are not shared between processes, so these few values live in a tiny file both processes read.
+    private static File keysFile() {
+        return new File(app.getFilesDir(), "remote-keys.txt");
+    }
+
+    /** Package the key opens ("" = nothing). */
+    static String keyApp(int keyCode) {
+        try (BufferedReader r = new BufferedReader(new FileReader(keysFile()))) {
+            String prefix = keyCode + "=", line;
+            while ((line = r.readLine()) != null) if (line.startsWith(prefix)) return line.substring(prefix.length());
+        } catch (IOException ignored) {
+        }
+        return defaultApp(keyCode);
+    }
+
+    static void setKeyApp(int keyCode, String pkg) {
+        StringBuilder sb = new StringBuilder();
+        for (int key : KEYS) sb.append(key).append('=').append(key == keyCode ? pkg : keyApp(key)).append('\n');
+        File tmp = new File(app.getFilesDir(), "remote-keys.txt.tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return;
+        }
+        if (tmp.renameTo(keysFile())) version++;
+    }
 }
